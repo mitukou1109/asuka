@@ -1,0 +1,80 @@
+<launch>
+<!--rosbag record -O testrun_01.bag /downsampling /tf /tf_static-->
+  <arg name="color" default="red"/> <!--タオルの色のしきい値をまとめたパラメータ -->
+  <arg name="mode" default="f"/>  <!--p:予選リーグ,f:決勝トーナメント　モードごとにパラメータを設定-->
+
+
+  <arg if="$(eval mode=='f')" name="cut_scale" value="0.18"/>
+  <arg if="$(eval mode=='f')" name="arm_width" value="0.10"/>
+
+  <arg if="$(eval mode=='p')" name="cut_scale" value="0.24"/>
+  <arg if="$(eval mode=='p')" name="arm_width" value="0.1"/>
+  
+
+  <include file="$(find realsense2_camera)/launch/rs_rgbd.launch">
+    <param name="enable_pointcloud" value="true"/>
+    <param name="align_depth" value="false"/>
+    <param name="depth_registered_processing" value="true"/>
+    <param name="align_depth" value="true"/>
+    <param name="depth_fps"   value="60"/>
+    <param name="infra_fps"   value="60"/>
+    <param name="color_fps"   value="60"/>
+  </include>
+
+<!--カメラ位置を示すtf変換（Realsenseの取り付け角は、yaw角の値で変更） x,y,z,yaw変更可-->
+  <node pkg="tf" type="static_transform_publisher" name="realsense_tf" args="-0.22 0.04 0.98 -1.57 0 -2.58 base_link camera_color_optical_frame 100"/>
+
+  <rosparam command="load" file="$(find pcl_ros_processing)/param/$(arg color).yaml" />
+
+  <!-- <node type="downsampling" pkg="pcl_ros_processing" name="downsampling">
+    <param name="down_rate" value="0.01"/>
+    <remap from="/input" to="/camera/depth_registered/points"/>
+  </node> -->
+
+  <node type="color_clustering" pkg="pcl_ros_processing" name="color_clustering" >
+    <param name="topic_name" value="/camera/depth_registered/points"/>
+    <param name="size_min_myT" value="200"/>　<!--ｍｙTクラスタ（自チームタオル）を構成する最小の点の数 -->
+    <param name="size_min_others" value="500"/>　<!--othersクラスタ（自チームタオル以外）を構成する最小の点の数 -->
+    <param name="cut_scale" value="$(arg cut_scale)"/> <!--タオルがcut_scaleより大きい場合、２個が並んでいると判断し分断する -->
+    <param name="recluster_scale" value="0.5"/> <!--タオルの奥行き幅がrecluster_scaleより大きい場合、２個が斜め並んでいると判断しクラスタリングし直す -->
+    <param name="width_min" value="0.02"/> <!--使用する点群の領域(x軸)の最小値 -->
+    <param name="width_max" value="0.78"/> <!--使用する点群の領域(x軸)の最大値 -->
+    <param name="limit_z_min" value="0.02"/> <!--使用する点群の領域(Z軸)の最小値 -->
+    <param name="down_rate" value="0.01"/>
+    <param name="ignore_size" value="700"/>
+    <param name="color_output" value="true"/>
+  </node>
+
+
+  <node type="judge_area_3" pkg="pcl_ros_processing" name="judge_area_3" >
+    <param name="arm_width" value="$(arg arm_width)"/> <!--マシンの腕の幅（安全に回収するために必要な領域の幅） -->
+    <param name="catch_width" value="0.1"/> <!--マシンの腕の幅（安全に回収するために必要な領域の幅） -->
+    <param name="ok_threshold" value="2"/>  <!--タオル回収の目標地点にたどり着いたと判断するループ回数 -->
+    <param name="loop_rate" value="30"/>  <!--プログラム実行の周波数［Hz］ -->
+    <param name="tolerance" value="35"/> <!--位置合わせの許容(目標地点の +-tolerance[mm]に入っていれば把持) -->
+    <param name="pull_space" value="110"/> <!---->
+    <param name="switch_max" value="6"/>
+    <param name="same_max" value="1"/>
+  </node>
+
+  <node type="catch_clustering2" pkg="pcl_ros_processing" name="catch_clustering2">
+    <param name="catch_min_myT" value="100"/>　
+    <param name="catch_min_others" value="100"/>
+    <param name="cut_scale" value="0.45"/>
+  </node>
+
+  <node type="catch_area" pkg="pcl_ros_processing" name="catch_area" >
+    <param name="arm_width" value="0.09"/>
+    <param name="ok_threshold" value="3"/>
+    <param name="loop_rate" value="30"/>
+  </node>
+
+  <node type="send_data" pkg="pcl_ros_processing" name="send_data" output="screen">
+    <param name="loop_rate" value="100"/>
+    <param name="plus" value="150"/>
+    <param name="request_timeout" value="5"/>
+  </node>
+
+
+  <node pkg="rviz" type="rviz" args="-d '$(find pcl_ros_processing)/rviz/pointcloud_new.rviz'" name="visualizer" respawn="true" />
+</launch>
